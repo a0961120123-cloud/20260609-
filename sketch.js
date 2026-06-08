@@ -8,7 +8,7 @@ let predictions = [];
 let bladeTrail = []; 
 
 // 遊戲控制與計分變數（版本號依舊維持 1.6）
-const GAME_VERSION = "V1.6"; 
+const GAME_VERSION = "V1.8"; 
 let fruits = []; 
 let lastSpawnTime = 0;
 const topBarHeight = 60; // 上方留白橫條高度

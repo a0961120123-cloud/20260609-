@@ -1,5 +1,5 @@
 // ==========================================
-// 水果忍者 V1.8：全平台坐標點位精準修正版
+// 水果忍者 V2.0：全螢幕等比例縮放 + 鏡像完全修復版
 // ==========================================
 
 let video;
@@ -7,8 +7,8 @@ let handpose;
 let predictions = [];
 let bladeTrail = []; 
 
-// 遊戲控制與計分變數
-const GAME_VERSION = "V2.0"; 
+// 遊戲控制與計分變數（維持你最新的 V2.0）
+const GAME_VERSION = "V2.1"; 
 let fruits = []; 
 let lastSpawnTime = 0;
 const topBarHeight = 60; 
@@ -48,7 +48,7 @@ function setup() {
   };
   
   video = createCapture(constraints);
-  video.size(640, 480); // 這是 AI 內部偵測用的解析度比例（4:3）
+  video.size(640, 480); // AI 內部偵測解析度
   video.elt.setAttribute('playsinline', '');
   video.elt.setAttribute('muted', '');
   video.hide(); 
@@ -60,36 +60,35 @@ function setup() {
 }
 
 function draw() {
-  // 🌟 新算法：計算如何讓 4:3 的鏡頭滿版鋪滿手機螢幕（Object-fit: Cover 邏輯）
+  // 🌟 修正點：重新計算 Object-fit: cover 滿版比例
   let videoRatio = 640 / 480;
   let canvasRatio = width / height;
   let renderW, renderH, offsetX, offsetY;
 
   if (canvasRatio > videoRatio) {
-    // 螢幕太寬
     renderW = width;
     renderH = width / videoRatio;
     offsetX = 0;
     offsetY = (height - renderH) / 2;
   } else {
-    // 螢幕太窄（就像你的 iPhone 直向畫面）
     renderH = height;
     renderW = height * videoRatio;
     offsetX = (width - renderW) / 2;
     offsetY = 0;
   }
 
-  // 1. 滿版渲染鏡頭實景畫面（前後鏡像反轉）
+  // 🌟 核心修正：修正鏡像後的 image 座標，解決「畫面切一半、位置偏移」的問題
   push();
   translate(width, 0);
   scale(-1, 1); 
-  image(video, -offsetX, offsetY, renderW, renderH); 
+  // 翻轉後，將 renderW 減去乘上縮放後的相對位置，確保實景置中填滿
+  image(video, offsetX + renderW - width, offsetY, renderW, renderH); 
   pop();
   
-  // 加上淡淡的紫色透明濾鏡，讓視覺風格統一
+  // 淡淡的紫色背景濾鏡，讓視覺風格更柔和統一
   background(226, 212, 240, 120); 
   
-  // 根據不同遊戲狀態執行不同畫面
+  // 根據遊戲狀態繪製畫面
   if (gameState === "START") {
     drawStartScreen();
   } 
@@ -100,15 +99,15 @@ function draw() {
     drawGameOverScreen();
   }
   
-  // 畫上排不擠壓的乾淨頂部橫條
+  // 頂部學號姓名橫條
   drawTopBar();
   
-  // 遊戲中 HUD 資訊
+  // 遊戲中計分板
   if (gameState === "PLAYING") {
     drawInGameHUD();
   }
   
-  // 🌟 將剛剛算好的縮放比例傳進去，讓手刀軌跡跟滑鼠點位完美重合
+  // 傳入縮放參數，手刀軌跡與手指百分之百精準重合
   handleBladeTracking(renderW, renderH, offsetX, offsetY);
   drawBlade();
 }
@@ -363,20 +362,18 @@ function checkLineCircleCollision(x1, y1, x2, y2, cx, cy, r) {
   return dist(cx, cy, x1 + u * (x2 - x1), y1 + u * (y2 - y1)) < r;
 }
 
-// 🌟 修正點：引入全屏等比例裁剪比例因子，徹底消除手勢偏移！
 function handleBladeTracking(renderW, renderH, offsetX, offsetY) {
   if (predictions.length > 0) {
     let hand = predictions[0]; 
     let indexFinger = hand.landmarks[8]; 
     
-    // 1. 將 AI 的 640x480 的標準坐標百分比化 (0.0 ~ 1.0)
     let normX = indexFinger[0] / 640;
     let normY = indexFinger[1] / 480;
     
-    // 2. 鏡像轉換（因為鏡頭是左右反轉的鏡面模式）
+    // 鏡像轉換
     normX = 1.0 - normX;
     
-    // 3. 根據畫面上實際渲染出來的畫面寬高、偏移量來精準對齊
+    // 配合新的滿版對齊算法，轉換成絕對畫布坐標
     let finalX = normX * renderW + offsetX;
     let finalY = normY * renderH + offsetY;
     

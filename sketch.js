@@ -1,5 +1,5 @@
 // ==========================================
-// 水果忍者 V1.5：手部偵測 + 水果拋物線 + 完美切片
+// 水果忍者 V1.6：遊戲流程 + 倒數計時 + 核彈特效
 // ==========================================
 
 let video;
@@ -7,150 +7,362 @@ let handpose;
 let predictions = [];
 let bladeTrail = []; 
 
-// 🌟 遊戲控制變數
-const GAME_VERSION = "V1.5"; // 版本號更新
+// 遊戲控制與計分變數（版本維持 1.6）
+const GAME_VERSION = "V1.6"; 
 let fruits = []; 
 let lastSpawnTime = 0;
-const topBarHeight = 60; // 上方留白橫條高度
+const topBarHeight = 60; 
 
-// 水果種類清單
-const FRUIT_TYPES = ['WATERMELON', 'APPLE', 'BANANA', 'ORANGE', 'STRAWBERRY'];
+let score = 0;           
+let flashFrames = 0;     
+
+// 🌟 新增：遊戲狀態與計時控制
+let gameState = "START"; // "START" (開始), "PLAYING" (遊戲中), "GAMEOVER" (結束)
+let gameTimer = 60;      // 1 分鐘倒數
+let lastTimerCheck = 0;
+
+// 🌟 新增：核彈結束特效控制
+let showMushroomCloud = false;
+let mushroomX = 0;
+let mushroomY = 0;
+let mushroomSize = 10;
+
+// 遊戲生成物件種類（加入極具威脅性的核彈 NUKE）
+const SPAWN_TYPES = [
+  'WATERMELON', 'WATERMELON', 
+  'APPLE', 'APPLE', 
+  'BANANA', 'BANANA', 
+  'ORANGE', 'ORANGE', 
+  'STRAWBERRY', 'STRAWBERRY', 
+  'BOMB', 'BOMB', // 一般炸彈
+  'NUKE'          // 💥 終極核彈（出現機率較低）
+];
 
 function setup() {
   pixelDensity(1); 
   createCanvas(windowWidth, windowHeight);
   
+  // 輕量化視訊設定
   let constraints = {
-    video: { facingMode: "user" },
+    video: { facingMode: "user", width: 320, height: 240 },
     audio: false
   };
   
   video = createCapture(constraints);
-  video.size(width, height);
-  
+  video.size(320, 240);
   video.elt.setAttribute('playsinline', '');
   video.elt.setAttribute('muted', '');
   video.hide(); 
 
   handpose = ml5.handpose(video, () => console.log("AI 模型載入成功！"));
-  handpose.on('predict', results => {
-    predictions = results;
-  });
+  handpose.on('predict', results => { predictions = results; });
 
   angleMode(DEGREES);
-  lastSpawnTime = millis();
 }
 
 function draw() {
-  // 1. 畫出鏡頭畫面背景
-  if (video && video.loadedmetadata) {
-    push();
-    translate(width, 0);
-    scale(-1, 1);
-    image(video, 0, 0, width, height);
-    pop();
-  } else {
-    background('#e2d4f0');
+  // 1. 基礎淺紫色背景
+  background('#e2d4f0'); 
+  
+  // 根據不同遊戲狀態執行不同畫面
+  if (gameState === "START") {
+    drawStartScreen();
+  } 
+  else if (gameState === "PLAYING") {
+    drawPlayingScreen();
+  } 
+  else if (gameState === "GAMEOVER") {
+    drawGameOverScreen();
   }
   
-  // 2. 定時自動生產水果：每 1.4 秒隨機噴出一款經典水果
-  if (millis() - lastSpawnTime > 1400) {
-    fruits.push(new Fruit());
-    lastSpawnTime = millis();
-  }
+  // 2. 頂部不變的 UI 橫條
+  drawTopBar();
   
-  // 3. 🌟 更新、繪製、並檢查水果是否有被切到
-  for (let i = fruits.length - 1; i >= 0; i--) {
-    fruits[i].update();
-    fruits[i].display();
-    
-    // ⚔️ 核心碰撞檢查：如果水果還沒被切開，且手刀軌跡有在移動
-    if (!fruits[i].isSliced && bladeTrail.length > 1) {
-      let currentTip = bladeTrail[bladeTrail.length - 1];
-      let prevTip = bladeTrail[bladeTrail.length - 2];
-      
-      // 檢查手刀線段是否劃過水果的圓形範圍（加入 15 像素的安全緩衝半徑，防延遲錯過）
-      let hit = checkLineCircleCollision(
-        prevTip.x, prevTip.y, 
-        currentTip.x, currentTip.y, 
-        fruits[i].x, fruits[i].y, 
-        fruits[i].radius + 15
-      );
-      
-      if (hit) {
-        fruits[i].sliceMe(); // 💥 啪嚓！切開它！
-      }
-    }
-    
-    // 超出螢幕底部自動刪除
-    if (fruits[i].isOffScreen()) {
-      fruits.splice(i, 1);
-    }
-  }
-  
-  // 4. 頂部 UI 橫條（淺紫色）
-  noStroke();
-  fill('#e2d4f0'); 
-  rect(0, 0, width, topBarHeight); 
-  
-  // 5. 顯示學號姓名
-  push();
-  textAlign(CENTER, CENTER);
-  textStyle(BOLD);
-  fill('#5e548e'); 
-  textSize(24);
-  text("414730910陳益宏", width / 2, topBarHeight / 2);
-  pop();
-
-  // 6. 顯示版本號
-  push();
-  textAlign(RIGHT, CENTER);
-  textStyle(BOLD);
-  fill('#5e548e');
-  textSize(20);
-  text(GAME_VERSION, width - 30, topBarHeight / 2);
-  pop();
-  
-  // 7. 手刀軌跡與滑鼠模擬邏輯
+  // 3. 手刀軌跡與滑鼠模擬（任何狀態都保持追蹤與繪製，讓按鈕好點擊）
   handleBladeTracking();
   drawBlade();
 }
 
 // ==========================================
-// 🚀 正宗水果類別 (Fruit) 與切片物理
+// 🎨 各遊戲狀態畫面繪製
 // ==========================================
-class Fruit {
-  constructor() {
-    this.type = random(FRUIT_TYPES);
+
+// 【1. 開始畫面】
+function drawStartScreen() {
+  // 標題
+  push();
+  textAlign(CENTER, CENTER);
+  textStyle(BOLD);
+  fill('#5e548e');
+  textSize(48);
+  text("水果忍者 FRUIT NINJA", width / 2, height * 0.35);
+  
+  textSize(18);
+  fill('#9f86c0');
+  text("伸出食指或使用滑鼠揮砍水果！小心炸彈與核彈！", width / 2, height * 0.45);
+  pop();
+  
+  // 繪製開始遊戲按鈕
+  drawCustomButton("開始遊戲", width / 2, height * 0.6, 200, 60, '#5e548e', '#ffffff');
+}
+
+// 【2. 遊戲中畫面】
+function drawPlayingScreen() {
+  // 炸彈被切到的螢幕閃紅光特效
+  if (flashFrames > 0) {
+    background(255, 100, 100, 150); 
+    flashFrames--;
+  }
+  
+  // 🌟 倒數計時器邏輯
+  if (millis() - lastTimerCheck >= 1000) {
+    gameTimer--;
+    lastTimerCheck = millis();
+    if (gameTimer <= 0) {
+      endGame(false); // 時間到，正常結束
+    }
+  }
+  
+  // 定時自動生產水果/炸彈
+  if (millis() - lastSpawnTime > 1300) {
+    fruits.push(new FruitOrBomb());
+    lastSpawnTime = millis();
+  }
+  
+  // 更新與檢查水果物件
+  for (let i = fruits.length - 1; i >= 0; i--) {
+    fruits[i].update();
+    fruits[i].display();
     
-    // 物理出生設定
+    // ⚔️ 碰撞檢查
+    if (!fruits[i].isSliced && bladeTrail.length > 1) {
+      let currentTip = bladeTrail[bladeTrail.length - 1];
+      let prevTip = bladeTrail[bladeTrail.length - 2];
+      
+      let hit = checkLineCircleCollision(
+        prevTip.x, prevTip.y, currentTip.x, currentTip.y, 
+        fruits[i].x, fruits[i].y, fruits[i].radius + 25
+      );
+      
+      if (hit) {
+        fruits[i].sliceMe(); 
+        
+        if (fruits[i].type === 'NUKE') {
+          // 💥 切到核彈！記錄座標、觸發大爆炸
+          mushroomX = fruits[i].x;
+          mushroomY = fruits[i].y;
+          endGame(true); // 核彈直接結束遊戲
+        } else if (fruits[i].type === 'BOMB') {
+          score -= 3;        
+          flashFrames = 8;   
+        } else {
+          score += 1;        
+        }
+      }
+    }
+    
+    if (fruits[i].isOffScreen()) {
+      fruits.splice(i, 1);
+    }
+  }
+}
+
+// 【3. 遊戲結束畫面】
+function drawGameOverScreen() {
+  // 🌟 如果是被核彈炸掉的，先畫出震撼的巨大黑白蘑菇雲
+  if (showMushroomCloud) {
+    drawMushroomCloudEffect();
+  }
+
+  push();
+  textAlign(CENTER, CENTER);
+  textStyle(BOLD);
+  
+  if (showMushroomCloud) {
+    fill(40);
+    textSize(52);
+    text("核彈引爆！GAME OVER", width / 2, height * 0.3);
+  } else {
+    fill('#d62828');
+    textSize(52);
+    text("時間到！GAME OVER", width / 2, height * 0.3);
+  }
+  
+  // 顯示最終得分
+  fill('#5e548e');
+  textSize(32);
+  text("最終得分: " + score, width / 2, height * 0.45);
+  pop();
+  
+  // 繪製重新開始按鈕（等蘑菇雲稍微炸開後或者一般結束時顯現）
+  if (!showMushroomCloud || mushroomSize > 200) {
+    drawCustomButton("重新開始", width / 2, height * 0.65, 200, 60, '#5e548e', '#ffffff');
+  }
+}
+
+// ==========================================
+// 🛠️ 遊戲控制函式
+// ==========================================
+function startGame() {
+  score = 0;
+  gameTimer = 60;
+  fruits = [];
+  showMushroomCloud = false;
+  mushroomSize = 10;
+  gameState = "PLAYING";
+  lastTimerCheck = millis();
+  lastSpawnTime = millis();
+}
+
+function endGame(byNuke) {
+  gameState = "GAMEOVER";
+  if (byNuke) {
+    showMushroomCloud = true;
+  }
+}
+
+// 🌟 處理點擊與手刀劃過按鈕事件
+function checkButtonClick(bx, by, bw, bh) {
+  let currentTip = (bladeTrail.length > 0) ? bladeTrail[bladeTrail.length - 1] : {x: mouseX, y: mouseY};
+  
+  // 檢查滑鼠點擊，或者手刀軌跡尖端是否有停留在按鈕範圍內
+  let isMouseIn = (mouseX > bx - bw/2 && mouseX < bx + bw/2 && mouseY > by - bh/2 && mouseY < by + bh/2);
+  let isBladeIn = (currentTip.x > bx - bw/2 && currentTip.x < bx + bw/2 && currentTip.y > by - bh/2 && currentTip.y < by + bh/2);
+  
+  return (isMouseIn && mouseIsPressed) || isBladeIn;
+}
+
+// ==========================================
+// 🎨 UI 與 特效繪製組件
+// ==========================================
+
+function drawTopBar() {
+  noStroke();
+  fill('#d0bce3'); 
+  rect(0, 0, width, topBarHeight); 
+  
+  // 左上角分數
+  push();
+  textAlign(LEFT, CENTER); textStyle(BOLD); fill('#5e548e'); textSize(24);
+  text("SCORE: " + score, 30, topBarHeight / 2);
+  pop();
+  
+  // 🌟 正上方倒數時間（只在遊戲中顯示倒數，其餘顯示限制）
+  push();
+  textAlign(CENTER, CENTER); textStyle(BOLD); fill('#d62828'); textSize(26);
+  if (gameState === "PLAYING") {
+    text("TIME: " + gameTimer + "s", width / 2 - 180, topBarHeight / 2);
+  } else {
+    text("TIME: 60s", width / 2 - 180, topBarHeight / 2);
+  }
+  pop();
+  
+  // 中央名字
+  push();
+  textAlign(CENTER, CENTER); textStyle(BOLD); fill('#5e548e'); textSize(24);
+  text("414730910陳益宏", width / 2 + 50, topBarHeight / 2);
+  pop();
+
+  // 右上角版本號 (依舊維持 1.6)
+  push();
+  textAlign(RIGHT, CENTER); textStyle(BOLD); fill('#5e548e'); textSize(20);
+  text(GAME_VERSION, width - 30, topBarHeight / 2);
+  pop();
+}
+
+// 繪製客製化按鈕（會同時偵測滑鼠點擊與手刀劃過）
+function drawCustomButton(txt, x, y, w, h, btnColor, txtColor) {
+  let hovered = (mouseX > x - w/2 && mouseX < x + w/2 && mouseY > y - h/2 && mouseY < y + h/2);
+  
+  push();
+  rectMode(CENTER);
+  noStroke();
+  if (hovered) {
+    fill('#9f86c0'); // 懸停變色
+  } else {
+    fill(btnColor);
+  }
+  rect(x, y, w, h, 15); // 圓角按鈕
+  
+  // 文字
+  textAlign(CENTER, CENTER);
+  textStyle(BOLD);
+  fill(txtColor);
+  textSize(22);
+  text(txt, x, y);
+  pop();
+  
+  // 監聽觸發
+  if (checkButtonClick(x, y, w, h)) {
+    // 稍微延遲一下防連續觸發
+    if (gameState === "START") {
+      startGame();
+    } else if (gameState === "GAMEOVER" && (!showMushroomCloud || mushroomSize > 120)) {
+      startGame();
+    }
+  }
+}
+
+// 🌟 蒸氣龐克風「黑白灰蘑菇雲」爆炸特效
+function drawMushroomCloudEffect() {
+  if (mushroomSize < width * 0.8) {
+    mushroomSize += 8; // 蘑菇雲迅速變大開花
+  }
+  
+  push();
+  noStroke();
+  
+  // 1. 煙塵柱 (Stem)
+  fill(80, 180);
+  triangle(mushroomX - mushroomSize*0.15, height, mushroomX + mushroomSize*0.15, height, mushroomX, mushroomY);
+  
+  // 2. 巨大頂部雲朵 (Cap)
+  fill(40, 220); // 深黑灰
+  ellipse(mushroomX, mushroomY, mushroomSize, mushroomSize * 0.6);
+  fill(90, 220); // 中灰堆疊
+  ellipse(mushroomX - mushroomSize*0.2, mushroomY - mushroomSize*0.1, mushroomSize*0.6, mushroomSize * 0.4);
+  ellipse(mushroomX + mushroomSize*0.2, mushroomY - mushroomSize*0.1, mushroomSize*0.6, mushroomSize * 0.4);
+  fill(160, 200); // 亮白灰頂部
+  ellipse(mushroomX, mushroomY - mushroomSize*0.2, mushroomSize*0.5, mushroomSize * 0.3);
+  
+  // 3. 沖天衝擊波外圈
+  noFill();
+  stroke(255, 150);
+  strokeWeight(8);
+  ellipse(mushroomX, mushroomY, mushroomSize * 1.3, mushroomSize * 0.2);
+  pop();
+}
+
+// ==========================================
+// 🚀 水果與炸彈與核彈類別 (FruitOrBomb)
+// ==========================================
+class FruitOrBomb {
+  constructor() {
+    this.type = random(SPAWN_TYPES);
+    
     this.x = random(width * 0.15, width * 0.85);
     this.y = height + 50; 
     this.vx = (this.x < width / 2) ? random(2.5, 5.5) : random(-5.5, -2.5);
-    this.vy = random(-14, -19); 
-    this.gravity = 0.35; 
+    this.vy = random(-16, -22); 
+    this.gravity = 0.38; 
     
     this.size = random(75, 95);
-    this.radius = this.size * 0.45; // 用於碰撞判定的半徑
+    this.radius = this.size * 0.45; 
     this.angle = 0;
     this.rotSpeed = random(-3, 3);
     
-    // 🌟 切片狀態控制
     this.isSliced = false;
     
-    // 碎片物理資料（左半邊與右半邊）
     this.leftPart = { offsetX: 0, offsetY: 0, vx: 0, vy: 0, rot: 0, rotS: 0 };
     this.rightPart = { offsetX: 0, offsetY: 0, vx: 0, vy: 0, rot: 0, rotS: 0 };
   }
 
   update() {
-    // 基礎拋物線移動
     this.vy += this.gravity; 
     this.x += this.vx;
     this.y += this.vy;
     this.angle += this.rotSpeed; 
 
-    // 🌟 如果水果被切開了，兩半碎片要各自往外噴飛
     if (this.isSliced) {
       this.leftPart.vy += this.gravity;
       this.leftPart.offsetX += this.leftPart.vx;
@@ -168,74 +380,71 @@ class Fruit {
     if (this.isSliced) return;
     this.isSliced = true;
     
-    // 💥 給左半邊碎片一個向左爆開的隨機速度與劇烈旋轉
-    this.leftPart.vx = random(-4, -2);
-    this.leftPart.vy = random(-3, -1);
-    this.leftPart.rotS = random(-8, -4);
+    this.leftPart.vx = random(-5, -2);
+    this.leftPart.vy = random(-4, -1);
+    this.leftPart.rotS = random(-10, -5);
     
-    // 💥 給右半邊碎片一個向右爆開的隨機速度與劇烈旋轉
-    this.rightPart.vx = random(2, 4);
-    this.rightPart.vy = random(-3, -1);
-    this.rightPart.rotS = random(4, 8);
+    this.rightPart.vx = random(2, 5);
+    this.rightPart.vy = random(-4, -1);
+    this.rightPart.rotS = random(5, 10);
   }
 
   display() {
     if (!this.isSliced) {
-      // 1. 繪製完整水果
-      push();
-      translate(this.x, this.y);
-      rotate(this.angle);
-      this.drawFruitGraphics();
+      push(); translate(this.x, this.y); rotate(this.angle);
+      this.drawGraphics();
       pop();
     } else {
-      // 2. 🌟 繪製切片水果：利用 HTML5 Canvas 遮罩（clip）完美對半分裂
+      if (this.type === 'NUKE') return; // 核彈被砍中直接切換畫面，不畫小碎片
       
-      // 【繪製左半邊碎片】
+      // 繪製左半邊
       push();
       translate(this.x + this.leftPart.offsetX, this.y + this.leftPart.offsetY);
       rotate(this.angle + this.leftPart.rot);
       drawingContext.save();
-      beginShape(); // 建立左半邊的裁剪區域
-      vertex(-this.size, -this.size); vertex(0, -this.size);
-      vertex(0, this.size); vertex(-this.size, this.size);
-      endShape(CLOSE);
-      drawingContext.clip(); // 啟動遮罩
-      this.drawFruitGraphics();
-      drawingContext.restore(); // 解除遮罩
+      beginShape(); vertex(-this.size, -this.size); vertex(0, -this.size); vertex(0, this.size); vertex(-this.size, this.size); endShape(CLOSE);
+      drawingContext.clip(); this.drawGraphics(); drawingContext.restore();
       pop();
 
-      // 【繪製右半邊碎片】
+      // 繪製右半邊
       push();
       translate(this.x + this.rightPart.offsetX, this.y + this.rightPart.offsetY);
       rotate(this.angle + this.rightPart.rot);
       drawingContext.save();
-      beginShape(); // 建立右半邊的裁剪區域
-      vertex(0, -this.size); vertex(this.size, -this.size);
-      vertex(this.size, this.size); vertex(0, this.size);
-      endShape(CLOSE);
-      drawingContext.clip(); // 啟動遮罩
-      this.drawFruitGraphics();
-      drawingContext.restore(); // 解除遮罩
+      beginShape(); vertex(0, -this.size); vertex(this.size, -this.size); vertex(this.size, this.size); vertex(0, this.size); endShape(CLOSE);
+      drawingContext.clip(); this.drawGraphics(); drawingContext.restore();
       pop();
     }
   }
 
-  // 各種水果的造型圖形
-  drawFruitGraphics() {
+  drawGraphics() {
     noStroke();
     switch(this.type) {
+      case 'NUKE': // 🌟 亮黃色危險核彈
+        fill('#e65c00'); ellipse(0, 0, this.size, this.size); // 橘色外圈
+        fill('#ffcc00'); ellipse(0, 0, this.size * 0.85, this.size * 0.85); // 黃色本體
+        // 畫出中間黑色的經典核能三葉形標誌
+        fill(0); ellipse(0, 0, this.size*0.18); // 中心圓
+        arc(0, 0, this.size*0.6, this.size*0.6, -60, -0, PIE);
+        arc(0, 0, this.size*0.6, this.size*0.6, 60, 120, PIE);
+        arc(0, 0, this.size*0.6, this.size*0.6, 180, 240, PIE);
+        break;
+
+      case 'BOMB': // 💣 一般黑色炸彈
+        fill(40); ellipse(0, 0, this.size * 0.9, this.size * 0.9);
+        stroke(100); strokeWeight(4); noFill(); arc(0, -this.size * 0.4, 20, 20, 180, 270);
+        stroke('#ffbc42'); strokeWeight(6); point(10, -this.size * 0.55);
+        stroke('#d62828'); strokeWeight(4); point(14, -this.size * 0.58);
+        break;
+        
       case 'WATERMELON': // 🍉 西瓜
         fill('#2a9d8f'); ellipse(0, 0, this.size, this.size);
         fill('#e76f51'); ellipse(0, 0, this.size * 0.85, this.size * 0.85);
-        fill(0);
-        ellipse(-10, -5, 4, 6); ellipse(10, 5, 4, 6);
-        ellipse(5, -12, 4, 6); ellipse(-5, 12, 4, 6);
+        fill(0); ellipse(-10, -5, 4, 6); ellipse(10, 5, 4, 6); ellipse(5, -12, 4, 6); ellipse(-5, 12, 4, 6);
         break;
         
       case 'APPLE': // 🍎 蘋果
-        fill('#e63946');
-        ellipse(-this.size*0.1, 0, this.size * 0.85, this.size * 0.85);
-        ellipse(this.size*0.1, 0, this.size * 0.85, this.size * 0.85);
+        fill('#e63946'); ellipse(-this.size*0.1, 0, this.size * 0.85, this.size * 0.85); ellipse(this.size*0.1, 0, this.size * 0.85, this.size * 0.85);
         stroke('#4a3728'); strokeWeight(4); line(0, -this.size * 0.3, 0, -this.size * 0.5);
         fill('#52b788'); noStroke(); ellipse(this.size * 0.15, -this.size * 0.45, this.size * 0.3, this.size * 0.18);
         break;
@@ -243,39 +452,25 @@ class Fruit {
       case 'BANANA': // 🍌 香蕉
         noFill(); stroke('#f9c74f'); strokeWeight(this.size * 0.35); strokeCap(ROUND);
         arc(0, 0, this.size * 0.7, this.size * 0.7, 30, 150);
-        push();
-        let tipX = cos(30) * this.size * 0.35; let tipY = sin(30) * this.size * 0.35;
-        fill('#4a3728'); noStroke(); ellipse(tipX, tipY, 8, 8);
-        pop();
+        push(); let tipX = cos(30) * this.size * 0.35; let tipY = sin(30) * this.size * 0.35; fill('#4a3728'); noStroke(); ellipse(tipX, tipY, 8, 8); pop();
         break;
         
       case 'ORANGE': // 🍊 柳丁
         fill('#f9844a'); ellipse(0, 0, this.size, this.size);
         fill('#f9c74f'); ellipse(0, 0, this.size * 0.88, this.size * 0.88);
         stroke('#f9844a'); strokeWeight(2);
-        for(let a = 0; a < 360; a += 45) {
-          line(0, 0, cos(a) * this.size * 0.44, sin(a) * this.size * 0.44);
-        }
+        for(let a = 0; a < 360; a += 45) { line(0, 0, cos(a) * this.size * 0.44, sin(a) * this.size * 0.44); }
         break;
         
       case 'STRAWBERRY': // 🍓 草莓
-        fill('#d62828');
-        beginShape();
-        vertex(0, this.size * 0.5);
-        bezierVertex(-this.size*0.5, this.size*0.2, -this.size*0.4, -this.size*0.4, 0, -this.size*0.4);
-        bezierVertex(this.size*0.4, -this.size*0.4, this.size*0.5, this.size*0.2, 0, this.size * 0.5);
-        endShape(CLOSE);
-        fill('#2a9d8f');
-        triangle(-15, -this.size*0.4, 0, -this.size*0.4, -8, -this.size * 0.55);
-        triangle(0, -this.size*0.4, 15, -this.size*0.4, 8, -this.size * 0.55);
-        fill('#f9c74f');
-        ellipse(-8, -5, 3, 4); ellipse(8, -5, 3, 4); ellipse(0, 10, 3, 4);
+        fill('#d62828'); beginShape(); vertex(0, this.size * 0.5); bezierVertex(-this.size*0.5, this.size*0.2, -this.size*0.4, -this.size*0.4, 0, -this.size*0.4); bezierVertex(this.size*0.4, -this.size*0.4, this.size*0.5, this.size*0.2, 0, this.size * 0.5); endShape(CLOSE);
+        fill('#2a9d8f'); triangle(-15, -this.size*0.4, 0, -this.size*0.4, -8, -this.size * 0.55); triangle(0, -this.size*0.4, 15, -this.size*0.4, 8, -this.size * 0.55);
+        fill('#f9c74f'); ellipse(-8, -5, 3, 4); ellipse(8, -5, 3, 4); ellipse(0, 10, 3, 4);
         break;
     }
   }
 
   isOffScreen() {
-    // 如果切開了，以碎片是否掉下去為準
     if (this.isSliced) {
       return (this.y + this.leftPart.offsetY > height + 100 && this.y + this.rightPart.offsetY > height + 100);
     }
@@ -284,19 +479,14 @@ class Fruit {
 }
 
 // ==========================================
-// 📐 數學演算法：檢查手刀線段與水果圓形是否相交
+// 線段與圓形碰撞檢查
 // ==========================================
 function checkLineCircleCollision(x1, y1, x2, y2, cx, cy, r) {
   let lLen = dist(x1, y1, x2, y2);
   if (lLen === 0) return dist(x1, y1, cx, cy) < r;
-  
   let u = ((cx - x1) * (x2 - x1) + (cy - y1) * (y2 - y1)) / (lLen * lLen);
   u = constrain(u, 0, 1);
-  
-  let closestX = x1 + u * (x2 - x1);
-  let closestY = y1 + u * (y2 - y1);
-  
-  return dist(cx, cy, closestX, closestY) < r;
+  return dist(cx, cy, x1 + u * (x2 - x1), y1 + u * (y2 - y1)) < r;
 }
 
 // ==========================================
@@ -306,13 +496,15 @@ function handleBladeTracking() {
   if (predictions.length > 0) {
     let hand = predictions[0]; 
     let indexFinger = hand.landmarks[8]; 
-    bladeTrail.push({ x: width - indexFinger[0], y: indexFinger[1] });
+    let mappedX = map(indexFinger[0], 0, 320, width, 0);
+    let mappedY = map(indexFinger[1], 0, 240, 0, height);
+    bladeTrail.push({ x: mappedX, y: mappedY });
   } else {
     if (mouseX > 0 && mouseX < width && mouseY > topBarHeight && mouseY < height) {
       bladeTrail.push({ x: mouseX, y: mouseY });
     }
   }
-  if (bladeTrail.length > 10) bladeTrail.shift();
+  if (bladeTrail.length > 8) bladeTrail.shift();
   if (predictions.length === 0 && mouseX === pmouseX && mouseY === pmouseY && bladeTrail.length > 0) {
     bladeTrail.shift();
   }
@@ -322,7 +514,7 @@ function drawBlade() {
   if (bladeTrail.length > 1) {
     noFill(); stroke('#ccff00'); strokeCap(ROUND);
     for (let i = 0; i < bladeTrail.length - 1; i++) {
-      strokeWeight(map(i, 0, bladeTrail.length, 4, 18));
+      strokeWeight(map(i, 0, bladeTrail.length, 5, 22)); 
       line(bladeTrail[i].x, bladeTrail[i].y, bladeTrail[i + 1].x, bladeTrail[i + 1].y);
     }
   }
@@ -333,5 +525,5 @@ function drawBlade() {
   }
 }
 
-function windowResized() { resizeCanvas(windowWidth, windowHeight); if (video) video.size(width, height); }
+function windowResized() { resizeCanvas(windowWidth, windowHeight); }
 function touchMoved() { return false; }

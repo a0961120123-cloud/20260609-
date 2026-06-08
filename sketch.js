@@ -1,5 +1,5 @@
 // ==========================================
-// 水果忍者 V1.6：排版修正 + 鏡頭修復 + 獨立計分板
+// 水果忍者 V1.8：鏡頭畫面回顯 + 介面排版優化
 // ==========================================
 
 let video;
@@ -7,11 +7,11 @@ let handpose;
 let predictions = [];
 let bladeTrail = []; 
 
-// 遊戲控制與計分變數（版本號依舊維持 1.6）
-const GAME_VERSION = "V1.8"; 
+// 遊戲控制與計分變數（同步你畫面上的 V1.9）
+const GAME_VERSION = "V1.9"; 
 let fruits = []; 
 let lastSpawnTime = 0;
-const topBarHeight = 60; // 上方留白橫條高度
+const topBarHeight = 60; 
 
 let score = 0;           
 let flashFrames = 0;     
@@ -42,14 +42,12 @@ function setup() {
   pixelDensity(1); 
   createCanvas(windowWidth, windowHeight);
   
-  // 🌟 修正點 1：移除強制 320x240 限制，改用廣泛相容的標準設定，修復部分手機打不開鏡頭的問題
   let constraints = {
     video: { facingMode: "user" },
     audio: false
   };
   
   video = createCapture(constraints);
-  // 讓後台處理維持在合適大小，防 AI 運算卡頓
   video.size(640, 480); 
   video.elt.setAttribute('playsinline', '');
   video.elt.setAttribute('muted', '');
@@ -62,9 +60,19 @@ function setup() {
 }
 
 function draw() {
-  // 基礎淺紫色背景（不渲染全螢幕視訊，維持流暢不延遲）
-  background('#e2d4f0'); 
+  // 🌟 核心修正：將視訊畫面鏡像反轉並畫在背景，這樣開鏡頭就能看到自己了！
+  push();
+  translate(width, 0);
+  scale(-1, 1); // 左右反轉，手勢揮砍方向才會跟直覺一致（照鏡子原理）
   
+  // 滿版鋪底鏡頭畫面
+  image(video, 0, 0, width, height); 
+  pop();
+  
+  // 給鏡頭加上一層淡淡的淺紫色濾鏡，維持原本優雅的整體色調，也讓水果更明顯
+  background(226, 212, 240, 120); 
+  
+  // 根據不同遊戲狀態執行不同畫面
   if (gameState === "START") {
     drawStartScreen();
   } 
@@ -75,10 +83,10 @@ function draw() {
     drawGameOverScreen();
   }
   
-  // 🌟 修正點 2：畫上排不擠壓的乾淨頂部橫條
+  // 畫上排不擠壓的乾淨頂部橫條
   drawTopBar();
   
-  // 🌟 修正點 3：如果是遊戲中，單獨在左上方畫出帶有淺色方框背景的計分與計時板
+  // 如果是遊戲中，在左上方畫出帶有淺色方框背景的計分與計時板
   if (gameState === "PLAYING") {
     drawInGameHUD();
   }
@@ -92,31 +100,28 @@ function draw() {
 // 🎨 各遊戲狀態畫面繪製
 // ==========================================
 
-// 【1. 開始畫面】
 function drawStartScreen() {
   push();
   textAlign(CENTER, CENTER);
   textStyle(BOLD);
   fill('#5e548e');
-  textSize(min(width * 0.08, 42)); // 自適應大小，防爆字
+  textSize(min(width * 0.08, 42)); 
   text("水果忍者 FRUIT NINJA", width / 2, height * 0.35);
   
   textSize(16);
-  fill('#9f86c0');
+  fill('#5e548e');
   text("伸出食指或使用滑鼠揮砍水果！\n小心炸彈與核彈！", width / 2, height * 0.46);
   pop();
   
   drawCustomButton("開始遊戲", width / 2, height * 0.62, 200, 60, '#5e548e', '#ffffff');
 }
 
-// 【2. 遊戲中畫面】
 function drawPlayingScreen() {
   if (flashFrames > 0) {
     background(255, 100, 100, 150); 
     flashFrames--;
   }
   
-  // 倒數計時器邏輯
   if (millis() - lastTimerCheck >= 1000) {
     gameTimer--;
     lastTimerCheck = millis();
@@ -125,13 +130,11 @@ function drawPlayingScreen() {
     }
   }
   
-  // 定時自動生產物體
   if (millis() - lastSpawnTime > 1300) {
     fruits.push(new FruitOrBomb());
     lastSpawnTime = millis();
   }
   
-  // 更新與檢查水果物件
   for (let i = fruits.length - 1; i >= 0; i--) {
     fruits[i].update();
     fruits[i].display();
@@ -167,7 +170,6 @@ function drawPlayingScreen() {
   }
 }
 
-// 【3. 遊戲結束畫面】
 function drawGameOverScreen() {
   if (showMushroomCloud) {
     drawMushroomCloudEffect();
@@ -198,28 +200,34 @@ function drawGameOverScreen() {
 }
 
 // ==========================================
-// 🛠️ 遊戲控制與新 HUD 介面
+// 🛠️ UI 與 HUD 面板設定
 // ==========================================
 
 function drawTopBar() {
   noStroke();
-  fill('#d0bce3'); 
+  fill(208, 188, 227, 220); // 帶有一點透明度的頂部條
   rect(0, 0, width, topBarHeight); 
   
-  // 🌟 置中對齊的姓名，絕不擠壓
+  // 🌟 大幅優化：縮小文字、增加自適應，確保手機直向時絕對不會擠在一起
   push();
-  textAlign(CENTER, CENTER); textStyle(BOLD); fill('#5e548e'); textSize(22);
+  textAlign(CENTER, CENTER); 
+  textStyle(BOLD); 
+  fill('#5e548e'); 
+  let nameSize = min(width * 0.05, 20); // 隨螢幕寬度縮放
+  textSize(nameSize);
   text("414730910陳益宏", width / 2, topBarHeight / 2);
   pop();
 
-  // 🌟 右上角版本號（維持 1.6）
+  // 右上角版本號
   push();
-  textAlign(RIGHT, CENTER); textStyle(BOLD); fill('#5e548e'); textSize(18);
-  text(GAME_VERSION, width - 25, topBarHeight / 2);
+  textAlign(RIGHT, CENTER); 
+  textStyle(BOLD); 
+  fill('#5e548e'); 
+  textSize(16);
+  text(GAME_VERSION, width - 20, topBarHeight / 2);
   pop();
 }
 
-// 🌟 修正點 3：在遊戲區域中左上方繪製帶有「淺色方框背景」的資訊面板
 function drawInGameHUD() {
   let hudX = 25;
   let hudY = topBarHeight + 25;
@@ -227,19 +235,16 @@ function drawInGameHUD() {
   let boxHeight = 85;
 
   push();
-  // 畫出半透明的漂亮淺色背景框
   noStroke();
-  fill(245, 242, 250, 200); // 柔和的淺白紫色，帶 200 透明度
-  rect(hudX, hudY, boxWidth, boxHeight, 12); // 圓角外框
+  fill(255, 255, 255, 220); // 純白高對比半透明底框，在實景鏡頭前更清晰
+  rect(hudX, hudY, boxWidth, boxHeight, 12); 
   
-  // 寫入得分文字
   textAlign(LEFT, CENTER);
   textStyle(BOLD);
   fill('#5e548e');
   textSize(20);
   text("SCORE: " + score, hudX + 15, hudY + 25);
   
-  // 寫入計時文字
   fill('#d62828');
   textSize(19);
   text("TIME: " + gameTimer + "s", hudX + 15, hudY + 58);
@@ -301,7 +306,7 @@ function drawMushroomCloudEffect() {
 }
 
 // ==========================================
-// 🚀 水果與炸彈與核彈類別 (FruitOrBomb)
+// 🚀 物件類別 (FruitOrBomb)
 // ==========================================
 class FruitOrBomb {
   constructor() {

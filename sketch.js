@@ -1,5 +1,5 @@
 // ==========================================
-// 水果忍者第一步：手部偵測（接近全螢幕包裹版）
+// 水果忍者 V1.3：手部偵測（修正對齊與加入版本號）
 // ==========================================
 
 let video;
@@ -7,16 +7,14 @@ let handpose;
 let predictions = [];
 let bladeTrail = []; 
 
-let videoW, videoH; // 動態計算的大視訊尺寸
-let videoX, videoY; // 視訊在畫布上的起點座標
+// 🌟 版本號設定
+const GAME_VERSION = "V1.3";
 
 function setup() {
   pixelDensity(1); 
   createCanvas(windowWidth, windowHeight);
   
-  // 🌟 1. 重新計算尺寸：讓視訊寬高都佔滿螢幕的 92%，留下 8% 空間
-  calculateVideoSize();
-  
+  // 使用最穩定、不縮放的自適應鏡頭設定
   let constraints = {
     video: {
       facingMode: "user" 
@@ -25,7 +23,7 @@ function setup() {
   };
   
   video = createCapture(constraints);
-  video.size(videoW, videoH);
+  video.size(width, height); // 讓視訊直接等同畫布大小
   
   video.elt.setAttribute('playsinline', '');
   video.elt.setAttribute('muted', '');
@@ -40,51 +38,60 @@ function setup() {
 }
 
 function draw() {
-  // 🌟 2. 真正的純淺紫色背景
-  background('#e2d4f0'); 
-  
-  // 🌟 3. 大畫面視訊置中包裹（無透明度，超清晰）
+  // 1. 先畫出清晰、不模糊的 100% 鏡頭畫面（做為全螢幕背景）
   if (video && video.loadedmetadata) {
     push();
-    // 移動到視訊視窗的右上角，再做鏡像翻轉
-    translate(videoX + videoW, videoY);
+    translate(width, 0);
     scale(-1, 1);
-    image(video, 0, 0, videoW, videoH);
+    image(video, 0, 0, width, height);
     pop();
-    
-    // 給大視訊加一個白色細邊框，更有精緻感
-    noFill();
-    stroke(255);
-    strokeWeight(3);
-    rect(videoX, videoY, videoW, videoH, 12); // 圓角邊框
+  } else {
+    // 如果沒鏡頭（電腦測試），就用原本的淺紫色當背景
+    background('#e2d4f0');
   }
   
-  // 🌟 4. 顯示學號姓名（完美待在上方紫色留白處）
+  // 🌟 2. 畫出上方包裹名字與版本號的「淺紫色獨立橫條」
+  let topBarHeight = 60; // 上方留白條的高度
+  noStroke();
+  fill('#e2d4f0'); 
+  rect(0, 0, width, topBarHeight); // 在最上方蓋一條純淺紫色塊
+  
+  // 🌟 3. 在淺紫色橫條內顯示學號姓名（中間）
   push();
   textAlign(CENTER, CENTER);
   textStyle(BOLD);
   fill('#5e548e'); 
-  textSize(26);
-  // 將文字垂直置中放在上方留白的區塊內
-  text("414730910陳益宏", width / 2, videoY / 2);
+  textSize(24);
+  text("414730910陳益宏", width / 2, topBarHeight / 2);
+  pop();
+
+  // 🌟 4. 在右上方顯示版本號（用來確認網頁有沒有刷新成功）
+  push();
+  textAlign(RIGHT, CENTER);
+  textStyle(BOLD);
+  fill('#5e548e');
+  textSize(20);
+  text(GAME_VERSION, width - 30, topBarHeight / 2);
   pop();
   
-  // 🌟 5. 手部偵測與滑鼠模擬邏輯
+  // 🌟 5. 精準手部偵測（直接 1:1 對齊手指，絕對不會再移位）
   if (predictions.length > 0) {
     let hand = predictions[0]; 
-    let indexFinger = hand.landmarks[8]; 
+    let indexFinger = hand.landmarks[8]; // 抓取食指尖
     
-    // 對應到全螢幕大畫面的精確座標
-    let mappedX = map(indexFinger[0], 0, video.width, videoW, 0) + videoX;
-    let mappedY = map(indexFinger[1], 0, video.height, 0, videoH) + videoY;
+    // 因為鏡頭畫面左右翻轉，X 座標做鏡像轉換即可，不進行任何地圖縮放
+    let bladeX = width - indexFinger[0];
+    let bladeY = indexFinger[1];
     
-    bladeTrail.push({ x: mappedX, y: mappedY });
+    bladeTrail.push({ x: bladeX, y: bladeY });
   } else {
-    if (mouseX > 0 && mouseX < width && mouseY > 0 && mouseY < height) {
+    // 電腦滑鼠模擬
+    if (mouseX > 0 && mouseX < width && mouseY > topBarHeight && mouseY < height) {
       bladeTrail.push({ x: mouseX, y: mouseY });
     }
   }
   
+  // 限制手刀軌跡長度
   if (bladeTrail.length > 10) {
     bladeTrail.shift();
   }
@@ -97,26 +104,6 @@ function draw() {
   drawBlade();
 }
 
-// 🌟 專門用來計算「接近全螢幕」且不跑版比例的輔助函式
-function calculateVideoSize() {
-  // 讓視訊的最大高度佔螢幕的 82%（留空間給上方名字和下方邊距）
-  let targetH = height * 0.82;
-  let targetW = targetH * (640 / 480); // 照 4:3 比例放大
-  
-  // 如果寬度太寬超出螢幕（例如手機直向），就改用寬度當基準
-  if (targetW > width * 0.92) {
-    targetW = width * 0.92;
-    targetH = targetW * (480 / 640);
-  }
-  
-  videoW = targetW;
-  videoH = targetH;
-  
-  // X 置中，Y 稍微往下挪一點點，留出完美的上方名字空間
-  videoX = (width - videoW) / 2;
-  videoY = (height - videoH) * 0.65; 
-}
-
 function drawBlade() {
   if (bladeTrail.length > 1) {
     noFill();
@@ -126,7 +113,7 @@ function drawBlade() {
     for (let i = 0; i < bladeTrail.length - 1; i++) {
       let p1 = bladeTrail[i];
       let p2 = bladeTrail[i + 1];
-      let thickness = map(i, 0, bladeTrail.length, 4, 18); // 大畫面下手刀稍微加粗，更有氣勢
+      let thickness = map(i, 0, bladeTrail.length, 4, 18); 
       strokeWeight(thickness);
       line(p1.x, p1.y, p2.x, p2.y);
     }
@@ -144,8 +131,7 @@ function drawBlade() {
 
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
-  calculateVideoSize();
-  if (video) video.size(videoW, videoH);
+  if (video) video.size(width, height);
 }
 
 function touchMoved() {

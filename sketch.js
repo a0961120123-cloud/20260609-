@@ -1,5 +1,5 @@
 // ==========================================
-// 水果忍者第一步：手部偵測（含電腦滑鼠模擬與指定背景/文字）
+// 水果忍者第一步：手部偵測（修正包裹式背景與視訊置中）
 // ==========================================
 
 let video;
@@ -7,32 +7,40 @@ let handpose;
 let predictions = [];
 let bladeTrail = []; 
 
+// 🌟 設定視訊視窗的固定尺寸
+let videoW = 640;
+let videoH = 480;
+let videoX, videoY; // 視訊在畫布上的起點座標
+
 function setup() {
-  // 固定像素密度，防止 iOS Retina 螢幕卡頓
   pixelDensity(1); 
   createCanvas(windowWidth, windowHeight);
   
-  // 針對 iOS 的鏡頭特殊設定
+  // 針對手機網頁寬度，如果螢幕太小（例如手機直向），動態縮小視訊視窗
+  if (windowWidth < videoW) {
+    videoW = windowWidth * 0.9;
+    videoH = videoW * (480 / 640); // 維持 4:3 比例
+  }
+
+  // 計算置中的座標位置
+  videoX = (width - videoW) / 2;
+  videoY = (height - videoH) / 2;
+  
   let constraints = {
     video: {
-      facingMode: "user" // 使用前置鏡頭
+      facingMode: "user" 
     },
     audio: false
   };
   
-  // 建立鏡頭捕捉（如果電腦沒鏡頭，這裡會安靜地略過）
   video = createCapture(constraints);
-  video.size(width, height);
+  video.size(videoW, videoH);
   
-  // 強制 iOS 不跳出全螢幕播放
   video.elt.setAttribute('playsinline', '');
   video.elt.setAttribute('muted', '');
   video.hide(); 
 
-  // 初始化手部偵測
-  handpose = ml5.handpose(video, modelReady);
-  
-  // 當偵測到手時，更新資料
+  handpose = ml5.handpose(video, () => console.log("AI 模型載入成功！"));
   handpose.on('predict', results => {
     predictions = results;
   });
@@ -40,57 +48,55 @@ function setup() {
   angleMode(DEGREES);
 }
 
-function modelReady() {
-  console.log("AI 手部辨識模型載入成功！");
-}
-
 function draw() {
-  // 🌟 1. 背景換成舒服的馬卡龍淺紫色
+  // 🌟 1. 真正的背景純淺紫色（不會有濾鏡感了！）
   background('#e2d4f0'); 
   
-  // 如果有鏡頭畫面，就把鏡頭影像淡淡地疊在背景上（透明度 50），這樣看得到自己又維持淺紫色
+  // 🌟 2. 把鏡頭畫面「包裹」在中間，並且是 100% 清晰、不加透明度
   if (video && video.loadedmetadata) {
     push();
-    translate(width, 0);
+    // 先移動到視訊視窗的右上角，再做鏡像翻轉
+    translate(videoX + videoW, videoY);
     scale(-1, 1);
-    tint(255, 50); // 讓視訊變得非常透明，凸顯淺紫色背景
-    image(video, 0, 0, width, height);
+    image(video, 0, 0, videoW, videoH);
     pop();
+    
+    // 給視訊視窗加一個精緻的白色邊框，讓它跟紫色背景融合得更好
+    noFill();
+    stroke(255);
+    strokeWeight(4);
+    rect(videoX, videoY, videoW, videoH, 8); // 帶有一點點圓角
   }
   
-  // 🌟 2. 顯示你的學號與姓名（中間正上方）
+  // 🌟 3. 顯示學號姓名（在視訊畫面外面，中間正上方）
   push();
   textAlign(CENTER, TOP);
   textStyle(BOLD);
-  fill('#5e548e'); // 深紫色的字體，在淺紫背景上很清晰
-  textSize(24);
-  text("414730910陳益宏", width / 2, 20);
+  fill('#5e548e'); 
+  textSize(26);
+  text("414730910陳益宏", width / 2, 25);
   pop();
   
-  // 🌟 3. 手部偵測與滑鼠模擬邏輯
+  // 🌟 4. 手部偵測與滑鼠模擬邏輯
   if (predictions.length > 0) {
-    // 【手機/有鏡頭測試】偵測食指尖端
     let hand = predictions[0]; 
     let indexFinger = hand.landmarks[8]; 
     
-    let bladeX = width - indexFinger[0];
-    let bladeY = indexFinger[1];
+    // 根據視訊縮放與置中的位置，重新計算手刀在全螢幕下的精確座標
+    let mappedX = map(indexFinger[0], 0, video.width, videoW, 0) + videoX;
+    let mappedY = map(indexFinger[1], 0, video.height, 0, videoH) + videoY;
     
-    bladeTrail.push({ x: bladeX, y: bladeY });
+    bladeTrail.push({ x: mappedX, y: mappedY });
   } else {
-    // 【電腦無鏡頭測試】如果沒有偵測到手，就用滑鼠位置當作手刀！
-    // 只有當滑鼠在畫布內移動時才紀錄軌跡
     if (mouseX > 0 && mouseX < width && mouseY > 0 && mouseY < height) {
       bladeTrail.push({ x: mouseX, y: mouseY });
     }
   }
   
-  // 限制手刀軌跡長度（留下短暫的流線尾巴）
   if (bladeTrail.length > 10) {
     bladeTrail.shift();
   }
   
-  // 當滑鼠或手停下來沒動時，軌跡會自然縮減消失
   if (predictions.length === 0 && mouseX === pmouseX && mouseY === pmouseY && bladeTrail.length > 0) {
     bladeTrail.shift();
   }
@@ -102,7 +108,7 @@ function draw() {
 function drawBlade() {
   if (bladeTrail.length > 1) {
     noFill();
-    stroke('#ccff00'); // 螢光黃手刀
+    stroke('#ccff00'); 
     strokeCap(ROUND);
     
     for (let i = 0; i < bladeTrail.length - 1; i++) {
@@ -126,7 +132,17 @@ function drawBlade() {
 
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
-  if (video) video.size(width, height);
+  // 視窗縮放時重新計算位置
+  if (windowWidth < 640) {
+    videoW = windowWidth * 0.9;
+    videoH = videoW * (480 / 640);
+  } else {
+    videoW = 640;
+    videoH = 480;
+  }
+  videoX = (width - videoW) / 2;
+  videoY = (height - videoH) / 2;
+  if (video) video.size(videoW, videoH);
 }
 
 function touchMoved() {

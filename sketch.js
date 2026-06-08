@@ -1,5 +1,5 @@
 // ==========================================
-// 水果忍者 V1.5：手部偵測 + 經典水果拋物線噴射
+// 水果忍者 V1.5：手部偵測 + 水果拋物線 + 完美切片
 // ==========================================
 
 let video;
@@ -8,7 +8,7 @@ let predictions = [];
 let bladeTrail = []; 
 
 // 🌟 遊戲控制變數
-const GAME_VERSION = "V1.4"; // 更新版本號
+const GAME_VERSION = "V1.5"; // 版本號更新
 let fruits = []; 
 let lastSpawnTime = 0;
 const topBarHeight = 60; // 上方留白橫條高度
@@ -53,16 +53,34 @@ function draw() {
     background('#e2d4f0');
   }
   
-  // 2. 🌟 定時自動生產水果：每 1.4 秒隨機噴出一款經典水果
+  // 2. 定時自動生產水果：每 1.4 秒隨機噴出一款經典水果
   if (millis() - lastSpawnTime > 1400) {
     fruits.push(new Fruit());
     lastSpawnTime = millis();
   }
   
-  // 3. 更新並畫出所有的水果
+  // 3. 🌟 更新、繪製、並檢查水果是否有被切到
   for (let i = fruits.length - 1; i >= 0; i--) {
     fruits[i].update();
     fruits[i].display();
+    
+    // ⚔️ 核心碰撞檢查：如果水果還沒被切開，且手刀軌跡有在移動
+    if (!fruits[i].isSliced && bladeTrail.length > 1) {
+      let currentTip = bladeTrail[bladeTrail.length - 1];
+      let prevTip = bladeTrail[bladeTrail.length - 2];
+      
+      // 檢查手刀線段是否劃過水果的圓形範圍（加入 15 像素的安全緩衝半徑，防延遲錯過）
+      let hit = checkLineCircleCollision(
+        prevTip.x, prevTip.y, 
+        currentTip.x, currentTip.y, 
+        fruits[i].x, fruits[i].y, 
+        fruits[i].radius + 15
+      );
+      
+      if (hit) {
+        fruits[i].sliceMe(); // 💥 啪嚓！切開它！
+      }
+    }
     
     // 超出螢幕底部自動刪除
     if (fruits[i].isOffScreen()) {
@@ -93,92 +111,147 @@ function draw() {
   text(GAME_VERSION, width - 30, topBarHeight / 2);
   pop();
   
-  // 7. 手部偵測與滑鼠模擬邏輯
+  // 7. 手刀軌跡與滑鼠模擬邏輯
   handleBladeTracking();
   drawBlade();
 }
 
 // ==========================================
-// 🚀 正宗水果類別 (Fruit)
+// 🚀 正宗水果類別 (Fruit) 與切片物理
 // ==========================================
 class Fruit {
   constructor() {
-    // 隨機決定一款水果類型
     this.type = random(FRUIT_TYPES);
     
-    // 物理出生設定（螢幕底部）
+    // 物理出生設定
     this.x = random(width * 0.15, width * 0.85);
     this.y = height + 50; 
     this.vx = (this.x < width / 2) ? random(2.5, 5.5) : random(-5.5, -2.5);
-    this.vy = random(-14, -19); // 往上噴射的速度
-    this.gravity = 0.35; // 地心引力
+    this.vy = random(-14, -19); 
+    this.gravity = 0.35; 
     
-    // 水果大小與旋轉設定
-    this.size = random(70, 90);
+    this.size = random(75, 95);
+    this.radius = this.size * 0.45; // 用於碰撞判定的半徑
     this.angle = 0;
     this.rotSpeed = random(-3, 3);
+    
+    // 🌟 切片狀態控制
+    this.isSliced = false;
+    
+    // 碎片物理資料（左半邊與右半邊）
+    this.leftPart = { offsetX: 0, offsetY: 0, vx: 0, vy: 0, rot: 0, rotS: 0 };
+    this.rightPart = { offsetX: 0, offsetY: 0, vx: 0, vy: 0, rot: 0, rotS: 0 };
   }
 
   update() {
+    // 基礎拋物線移動
     this.vy += this.gravity; 
     this.x += this.vx;
     this.y += this.vy;
     this.angle += this.rotSpeed; 
+
+    // 🌟 如果水果被切開了，兩半碎片要各自往外噴飛
+    if (this.isSliced) {
+      this.leftPart.vy += this.gravity;
+      this.leftPart.offsetX += this.leftPart.vx;
+      this.leftPart.offsetY += this.leftPart.vy;
+      this.leftPart.rot += this.leftPart.rotS;
+
+      this.rightPart.vy += this.gravity;
+      this.rightPart.offsetX += this.rightPart.vx;
+      this.rightPart.offsetY += this.rightPart.vy;
+      this.rightPart.rot += this.rightPart.rotS;
+    }
+  }
+
+  sliceMe() {
+    if (this.isSliced) return;
+    this.isSliced = true;
+    
+    // 💥 給左半邊碎片一個向左爆開的隨機速度與劇烈旋轉
+    this.leftPart.vx = random(-4, -2);
+    this.leftPart.vy = random(-3, -1);
+    this.leftPart.rotS = random(-8, -4);
+    
+    // 💥 給右半邊碎片一個向右爆開的隨機速度與劇烈旋轉
+    this.rightPart.vx = random(2, 4);
+    this.rightPart.vy = random(-3, -1);
+    this.rightPart.rotS = random(4, 8);
   }
 
   display() {
-    push();
-    translate(this.x, this.y);
-    rotate(this.angle);
+    if (!this.isSliced) {
+      // 1. 繪製完整水果
+      push();
+      translate(this.x, this.y);
+      rotate(this.angle);
+      this.drawFruitGraphics();
+      pop();
+    } else {
+      // 2. 🌟 繪製切片水果：利用 HTML5 Canvas 遮罩（clip）完美對半分裂
+      
+      // 【繪製左半邊碎片】
+      push();
+      translate(this.x + this.leftPart.offsetX, this.y + this.leftPart.offsetY);
+      rotate(this.angle + this.leftPart.rot);
+      drawingContext.save();
+      beginShape(); // 建立左半邊的裁剪區域
+      vertex(-this.size, -this.size); vertex(0, -this.size);
+      vertex(0, this.size); vertex(-this.size, this.size);
+      endShape(CLOSE);
+      drawingContext.clip(); // 啟動遮罩
+      this.drawFruitGraphics();
+      drawingContext.restore(); // 解除遮罩
+      pop();
 
-    // 依據水果種類進行精細繪製
+      // 【繪製右半邊碎片】
+      push();
+      translate(this.x + this.rightPart.offsetX, this.y + this.rightPart.offsetY);
+      rotate(this.angle + this.rightPart.rot);
+      drawingContext.save();
+      beginShape(); // 建立右半邊的裁剪區域
+      vertex(0, -this.size); vertex(this.size, -this.size);
+      vertex(this.size, this.size); vertex(0, this.size);
+      endShape(CLOSE);
+      drawingContext.clip(); // 啟動遮罩
+      this.drawFruitGraphics();
+      drawingContext.restore(); // 解除遮罩
+      pop();
+    }
+  }
+
+  // 各種水果的造型圖形
+  drawFruitGraphics() {
+    noStroke();
     switch(this.type) {
       case 'WATERMELON': // 🍉 西瓜
-        // 外皮
-        fill('#2a9d8f'); noStroke();
-        ellipse(0, 0, this.size, this.size);
-        // 內肉
-        fill('#e76f51');
-        ellipse(0, 0, this.size * 0.85, this.size * 0.85);
-        // 西瓜籽
+        fill('#2a9d8f'); ellipse(0, 0, this.size, this.size);
+        fill('#e76f51'); ellipse(0, 0, this.size * 0.85, this.size * 0.85);
         fill(0);
         ellipse(-10, -5, 4, 6); ellipse(10, 5, 4, 6);
         ellipse(5, -12, 4, 6); ellipse(-5, 12, 4, 6);
         break;
         
       case 'APPLE': // 🍎 蘋果
-        // 蘋果身
-        fill('#e63946'); noStroke();
+        fill('#e63946');
         ellipse(-this.size*0.1, 0, this.size * 0.85, this.size * 0.85);
         ellipse(this.size*0.1, 0, this.size * 0.85, this.size * 0.85);
-        // 梗與綠葉
-        stroke('#4a3728'); strokeWeight(4);
-        line(0, -this.size * 0.3, 0, -this.size * 0.5);
-        fill('#52b788'); noStroke();
-        ellipse(this.size * 0.15, -this.size * 0.45, this.size * 0.3, this.size * 0.18);
+        stroke('#4a3728'); strokeWeight(4); line(0, -this.size * 0.3, 0, -this.size * 0.5);
+        fill('#52b788'); noStroke(); ellipse(this.size * 0.15, -this.size * 0.45, this.size * 0.3, this.size * 0.18);
         break;
         
       case 'BANANA': // 🍌 香蕉
-        noFill(); stroke('#f9c74f'); strokeWeight(this.size * 0.35);
-        strokeCap(ROUND);
+        noFill(); stroke('#f9c74f'); strokeWeight(this.size * 0.35); strokeCap(ROUND);
         arc(0, 0, this.size * 0.7, this.size * 0.7, 30, 150);
-        // 香蕉頭黑蒂
         push();
-        let tipX = cos(30) * this.size * 0.35;
-        let tipY = sin(30) * this.size * 0.35;
-        fill('#4a3728'); noStroke();
-        ellipse(tipX, tipY, 8, 8);
+        let tipX = cos(30) * this.size * 0.35; let tipY = sin(30) * this.size * 0.35;
+        fill('#4a3728'); noStroke(); ellipse(tipX, tipY, 8, 8);
         pop();
         break;
         
       case 'ORANGE': // 🍊 柳丁
-        // 亮橘色外皮
-        fill('#f9844a'); noStroke();
-        ellipse(0, 0, this.size, this.size);
-        // 淺橘色內圈
-        fill('#f9c74f');
-        ellipse(0, 0, this.size * 0.88, this.size * 0.88);
-        // 果肉瓣線條
+        fill('#f9844a'); ellipse(0, 0, this.size, this.size);
+        fill('#f9c74f'); ellipse(0, 0, this.size * 0.88, this.size * 0.88);
         stroke('#f9844a'); strokeWeight(2);
         for(let a = 0; a < 360; a += 45) {
           line(0, 0, cos(a) * this.size * 0.44, sin(a) * this.size * 0.44);
@@ -186,30 +259,44 @@ class Fruit {
         break;
         
       case 'STRAWBERRY': // 🍓 草莓
-        fill('#f77f00'); // 蒂頭綠色
-        fill('#d62828'); noStroke();
-        // 繪製倒三角倒卵形的草莓身
+        fill('#d62828');
         beginShape();
         vertex(0, this.size * 0.5);
         bezierVertex(-this.size*0.5, this.size*0.2, -this.size*0.4, -this.size*0.4, 0, -this.size*0.4);
         bezierVertex(this.size*0.4, -this.size*0.4, this.size*0.5, this.size*0.2, 0, this.size * 0.5);
         endShape(CLOSE);
-        // 葉子
         fill('#2a9d8f');
         triangle(-15, -this.size*0.4, 0, -this.size*0.4, -8, -this.size * 0.55);
         triangle(0, -this.size*0.4, 15, -this.size*0.4, 8, -this.size * 0.55);
-        // 草莓小黑籽
         fill('#f9c74f');
-        ellipse(-8, -5, 3, 4); ellipse(8, -5, 3, 4);
-        ellipse(0, 10, 3, 4); ellipse(-5, 20, 3, 4); ellipse(5, 20, 3, 4);
+        ellipse(-8, -5, 3, 4); ellipse(8, -5, 3, 4); ellipse(0, 10, 3, 4);
         break;
     }
-    pop();
   }
 
   isOffScreen() {
+    // 如果切開了，以碎片是否掉下去為準
+    if (this.isSliced) {
+      return (this.y + this.leftPart.offsetY > height + 100 && this.y + this.rightPart.offsetY > height + 100);
+    }
     return (this.vy > 0 && this.y > height + 100);
   }
+}
+
+// ==========================================
+// 📐 數學演算法：檢查手刀線段與水果圓形是否相交
+// ==========================================
+function checkLineCircleCollision(x1, y1, x2, y2, cx, cy, r) {
+  let lLen = dist(x1, y1, x2, y2);
+  if (lLen === 0) return dist(x1, y1, cx, cy) < r;
+  
+  let u = ((cx - x1) * (x2 - x1) + (cy - y1) * (y2 - y1)) / (lLen * lLen);
+  u = constrain(u, 0, 1);
+  
+  let closestX = x1 + u * (x2 - x1);
+  let closestY = y1 + u * (y2 - y1);
+  
+  return dist(cx, cy, closestX, closestY) < r;
 }
 
 // ==========================================

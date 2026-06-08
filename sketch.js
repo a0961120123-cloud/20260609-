@@ -1,5 +1,5 @@
 // ==========================================
-// 水果忍者 V1.8：鏡頭畫面回顯 + 介面排版優化
+// 水果忍者 V1.8：全平台坐標點位精準修正版
 // ==========================================
 
 let video;
@@ -7,8 +7,8 @@ let handpose;
 let predictions = [];
 let bladeTrail = []; 
 
-// 遊戲控制與計分變數（同步你畫面上的 V1.9）
-const GAME_VERSION = "V1.9"; 
+// 遊戲控制與計分變數
+const GAME_VERSION = "V2.0"; 
 let fruits = []; 
 let lastSpawnTime = 0;
 const topBarHeight = 60; 
@@ -48,7 +48,7 @@ function setup() {
   };
   
   video = createCapture(constraints);
-  video.size(640, 480); 
+  video.size(640, 480); // 這是 AI 內部偵測用的解析度比例（4:3）
   video.elt.setAttribute('playsinline', '');
   video.elt.setAttribute('muted', '');
   video.hide(); 
@@ -60,16 +60,33 @@ function setup() {
 }
 
 function draw() {
-  // 🌟 核心修正：將視訊畫面鏡像反轉並畫在背景，這樣開鏡頭就能看到自己了！
+  // 🌟 新算法：計算如何讓 4:3 的鏡頭滿版鋪滿手機螢幕（Object-fit: Cover 邏輯）
+  let videoRatio = 640 / 480;
+  let canvasRatio = width / height;
+  let renderW, renderH, offsetX, offsetY;
+
+  if (canvasRatio > videoRatio) {
+    // 螢幕太寬
+    renderW = width;
+    renderH = width / videoRatio;
+    offsetX = 0;
+    offsetY = (height - renderH) / 2;
+  } else {
+    // 螢幕太窄（就像你的 iPhone 直向畫面）
+    renderH = height;
+    renderW = height * videoRatio;
+    offsetX = (width - renderW) / 2;
+    offsetY = 0;
+  }
+
+  // 1. 滿版渲染鏡頭實景畫面（前後鏡像反轉）
   push();
   translate(width, 0);
-  scale(-1, 1); // 左右反轉，手勢揮砍方向才會跟直覺一致（照鏡子原理）
-  
-  // 滿版鋪底鏡頭畫面
-  image(video, 0, 0, width, height); 
+  scale(-1, 1); 
+  image(video, -offsetX, offsetY, renderW, renderH); 
   pop();
   
-  // 給鏡頭加上一層淡淡的淺紫色濾鏡，維持原本優雅的整體色調，也讓水果更明顯
+  // 加上淡淡的紫色透明濾鏡，讓視覺風格統一
   background(226, 212, 240, 120); 
   
   // 根據不同遊戲狀態執行不同畫面
@@ -86,13 +103,13 @@ function draw() {
   // 畫上排不擠壓的乾淨頂部橫條
   drawTopBar();
   
-  // 如果是遊戲中，在左上方畫出帶有淺色方框背景的計分與計時板
+  // 遊戲中 HUD 資訊
   if (gameState === "PLAYING") {
     drawInGameHUD();
   }
   
-  // 手刀軌跡與滑鼠模擬
-  handleBladeTracking();
+  // 🌟 將剛剛算好的縮放比例傳進去，讓手刀軌跡跟滑鼠點位完美重合
+  handleBladeTracking(renderW, renderH, offsetX, offsetY);
   drawBlade();
 }
 
@@ -125,9 +142,7 @@ function drawPlayingScreen() {
   if (millis() - lastTimerCheck >= 1000) {
     gameTimer--;
     lastTimerCheck = millis();
-    if (gameTimer <= 0) {
-      endGame(false); 
-    }
+    if (gameTimer <= 0) endGame(false); 
   }
   
   if (millis() - lastSpawnTime > 1300) {
@@ -150,48 +165,31 @@ function drawPlayingScreen() {
       
       if (hit) {
         fruits[i].sliceMe(); 
-        
         if (fruits[i].type === 'NUKE') {
-          mushroomX = fruits[i].x;
-          mushroomY = fruits[i].y;
+          mushroomX = fruits[i].x; mushroomY = fruits[i].y;
           endGame(true); 
         } else if (fruits[i].type === 'BOMB') {
-          score -= 3;        
-          flashFrames = 8;   
+          score -= 3; flashFrames = 8;   
         } else {
           score += 1;        
         }
       }
     }
-    
-    if (fruits[i].isOffScreen()) {
-      fruits.splice(i, 1);
-    }
+    if (fruits[i].isOffScreen()) fruits.splice(i, 1);
   }
 }
 
 function drawGameOverScreen() {
-  if (showMushroomCloud) {
-    drawMushroomCloudEffect();
-  }
+  if (showMushroomCloud) drawMushroomCloudEffect();
 
   push();
-  textAlign(CENTER, CENTER);
-  textStyle(BOLD);
-  
+  textAlign(CENTER, CENTER); textStyle(BOLD);
   if (showMushroomCloud) {
-    fill(40);
-    textSize(min(width * 0.07, 46));
-    text("核彈引爆！GAME OVER", width / 2, height * 0.3);
+    fill(40); textSize(min(width * 0.07, 46)); text("核彈引爆！GAME OVER", width / 2, height * 0.3);
   } else {
-    fill('#d62828');
-    textSize(min(width * 0.08, 46));
-    text("時間到！GAME OVER", width / 2, height * 0.3);
+    fill('#d62828'); textSize(min(width * 0.08, 46)); text("時間到！GAME OVER", width / 2, height * 0.3);
   }
-  
-  fill('#5e548e');
-  textSize(28);
-  text("最終得分: " + score, width / 2, height * 0.46);
+  fill('#5e548e'); textSize(28); text("最終得分: " + score, width / 2, height * 0.46);
   pop();
   
   if (!showMushroomCloud || mushroomSize > 200) {
@@ -205,61 +203,34 @@ function drawGameOverScreen() {
 
 function drawTopBar() {
   noStroke();
-  fill(208, 188, 227, 220); // 帶有一點透明度的頂部條
+  fill(208, 188, 227, 220); 
   rect(0, 0, width, topBarHeight); 
   
-  // 🌟 大幅優化：縮小文字、增加自適應，確保手機直向時絕對不會擠在一起
   push();
-  textAlign(CENTER, CENTER); 
-  textStyle(BOLD); 
-  fill('#5e548e'); 
-  let nameSize = min(width * 0.05, 20); // 隨螢幕寬度縮放
+  textAlign(CENTER, CENTER); textStyle(BOLD); fill('#5e548e'); 
+  let nameSize = min(width * 0.05, 20);
   textSize(nameSize);
   text("414730910陳益宏", width / 2, topBarHeight / 2);
   pop();
 
-  // 右上角版本號
   push();
-  textAlign(RIGHT, CENTER); 
-  textStyle(BOLD); 
-  fill('#5e548e'); 
-  textSize(16);
+  textAlign(RIGHT, CENTER); textStyle(BOLD); fill('#5e548e'); textSize(16);
   text(GAME_VERSION, width - 20, topBarHeight / 2);
   pop();
 }
 
 function drawInGameHUD() {
-  let hudX = 25;
-  let hudY = topBarHeight + 25;
-  let boxWidth = 150;
-  let boxHeight = 85;
-
-  push();
-  noStroke();
-  fill(255, 255, 255, 220); // 純白高對比半透明底框，在實景鏡頭前更清晰
-  rect(hudX, hudY, boxWidth, boxHeight, 12); 
-  
-  textAlign(LEFT, CENTER);
-  textStyle(BOLD);
-  fill('#5e548e');
-  textSize(20);
-  text("SCORE: " + score, hudX + 15, hudY + 25);
-  
-  fill('#d62828');
-  textSize(19);
-  text("TIME: " + gameTimer + "s", hudX + 15, hudY + 58);
+  let hudX = 25; let hudY = topBarHeight + 25;
+  let boxWidth = 150; let boxHeight = 85;
+  push(); noStroke(); fill(255, 255, 255, 220); rect(hudX, hudY, boxWidth, boxHeight, 12); 
+  textAlign(LEFT, CENTER); textStyle(BOLD); fill('#5e548e'); textSize(20); text("SCORE: " + score, hudX + 15, hudY + 25);
+  fill('#d62828'); textSize(19); text("TIME: " + gameTimer + "s", hudX + 15, hudY + 58);
   pop();
 }
 
 function startGame() {
-  score = 0;
-  gameTimer = 60;
-  fruits = [];
-  showMushroomCloud = false;
-  mushroomSize = 10;
-  gameState = "PLAYING";
-  lastTimerCheck = millis();
-  lastSpawnTime = millis();
+  score = 0; gameTimer = 60; fruits = []; showMushroomCloud = false; mushroomSize = 10;
+  gameState = "PLAYING"; lastTimerCheck = millis(); lastSpawnTime = millis();
 }
 
 function endGame(byNuke) {
@@ -276,14 +247,8 @@ function checkButtonClick(bx, by, bw, bh) {
 
 function drawCustomButton(txt, x, y, w, h, btnColor, txtColor) {
   let hovered = (mouseX > x - w/2 && mouseX < x + w/2 && mouseY > y - h/2 && mouseY < y + h/2);
-  push();
-  rectMode(CENTER);
-  noStroke();
-  fill(hovered ? '#9f86c0' : btnColor);
-  rect(x, y, w, h, 15);
-  textAlign(CENTER, CENTER); textStyle(BOLD); fill(txtColor); textSize(22);
-  text(txt, x, y);
-  pop();
+  push(); rectMode(CENTER); noStroke(); fill(hovered ? '#9f86c0' : btnColor); rect(x, y, w, h, 15);
+  textAlign(CENTER, CENTER); textStyle(BOLD); fill(txtColor); textSize(22); text(txt, x, y); pop();
   
   if (checkButtonClick(x, y, w, h)) {
     if (gameState === "START") startGame();
@@ -291,12 +256,10 @@ function drawCustomButton(txt, x, y, w, h, btnColor, txtColor) {
   }
 }
 
-// 蘑菇雲特效
 function drawMushroomCloudEffect() {
   if (mushroomSize < width * 0.8) mushroomSize += 8;
   push(); noStroke();
-  fill(80, 180);
-  triangle(mushroomX - mushroomSize*0.15, height, mushroomX + mushroomSize*0.15, height, mushroomX, mushroomY);
+  fill(80, 180); triangle(mushroomX - mushroomSize*0.15, height, mushroomX + mushroomSize*0.15, height, mushroomX, mushroomY);
   fill(40, 220); ellipse(mushroomX, mushroomY, mushroomSize, mushroomSize * 0.6);
   fill(90, 220); ellipse(mushroomX - mushroomSize*0.2, mushroomY - mushroomSize*0.1, mushroomSize*0.6, mushroomSize * 0.4);
   ellipse(mushroomX + mushroomSize*0.2, mushroomY - mushroomSize*0.1, mushroomSize*0.6, mushroomSize * 0.4);
@@ -334,8 +297,7 @@ class FruitOrBomb {
   }
 
   sliceMe() {
-    if (this.isSliced) return;
-    this.isSliced = true;
+    if (this.isSliced) return; this.isSliced = true;
     this.leftPart.vx = random(-5, -2); this.leftPart.vy = random(-4, -1); this.leftPart.rotS = random(-10, -5);
     this.rightPart.vx = random(2, 5); this.rightPart.vy = random(-4, -1); this.rightPart.rotS = random(5, 10);
   }
@@ -358,14 +320,11 @@ class FruitOrBomb {
     noStroke();
     switch(this.type) {
       case 'NUKE':
-        fill('#e65c00'); ellipse(0, 0, this.size, this.size);
-        fill('#ffcc00'); ellipse(0, 0, this.size * 0.85, this.size * 0.85);
-        fill(0); ellipse(0, 0, this.size*0.18);
+        fill('#e65c00'); ellipse(0, 0, this.size, this.size); fill('#ffcc00'); ellipse(0, 0, this.size * 0.85, this.size * 0.85); fill(0); ellipse(0, 0, this.size*0.18);
         arc(0, 0, this.size*0.6, this.size*0.6, -60, 0, PIE); arc(0, 0, this.size*0.6, this.size*0.6, 60, 120, PIE); arc(0, 0, this.size*0.6, this.size*0.6, 180, 240, PIE);
         break;
       case 'BOMB':
-        fill(40); ellipse(0, 0, this.size * 0.9, this.size * 0.9);
-        stroke(100); strokeWeight(4); noFill(); arc(0, -this.size * 0.4, 20, 20, 180, 270);
+        fill(40); ellipse(0, 0, this.size * 0.9, this.size * 0.9); stroke(100); strokeWeight(4); noFill(); arc(0, -this.size * 0.4, 20, 20, 180, 270);
         stroke('#ffbc42'); strokeWeight(6); point(10, -this.size * 0.55); stroke('#d62828'); strokeWeight(4); point(14, -this.size * 0.58);
         break;
       case 'WATERMELON':
@@ -404,13 +363,28 @@ function checkLineCircleCollision(x1, y1, x2, y2, cx, cy, r) {
   return dist(cx, cy, x1 + u * (x2 - x1), y1 + u * (y2 - y1)) < r;
 }
 
-function handleBladeTracking() {
+// 🌟 修正點：引入全屏等比例裁剪比例因子，徹底消除手勢偏移！
+function handleBladeTracking(renderW, renderH, offsetX, offsetY) {
   if (predictions.length > 0) {
-    let hand = predictions[0]; let indexFinger = hand.landmarks[8]; 
-    bladeTrail.push({ x: map(indexFinger[0], 0, 640, width, 0), y: map(indexFinger[1], 0, 480, 0, height) });
+    let hand = predictions[0]; 
+    let indexFinger = hand.landmarks[8]; 
+    
+    // 1. 將 AI 的 640x480 的標準坐標百分比化 (0.0 ~ 1.0)
+    let normX = indexFinger[0] / 640;
+    let normY = indexFinger[1] / 480;
+    
+    // 2. 鏡像轉換（因為鏡頭是左右反轉的鏡面模式）
+    normX = 1.0 - normX;
+    
+    // 3. 根據畫面上實際渲染出來的畫面寬高、偏移量來精準對齊
+    let finalX = normX * renderW + offsetX;
+    let finalY = normY * renderH + offsetY;
+    
+    bladeTrail.push({ x: finalX, y: finalY });
   } else if (mouseX > 0 && mouseX < width && mouseY > topBarHeight && mouseY < height) {
     bladeTrail.push({ x: mouseX, y: mouseY });
   }
+  
   if (bladeTrail.length > 8) bladeTrail.shift();
   if (predictions.length === 0 && mouseX === pmouseX && mouseY === pmouseY && bladeTrail.length > 0) bladeTrail.shift();
 }
